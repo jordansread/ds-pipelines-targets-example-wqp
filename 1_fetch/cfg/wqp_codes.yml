@@ -28,7 +28,7 @@ phosphorus:
 - "Ortho-Phosphate-Phosphorus"
 
 nitrogen:
-- "Inorganic nitrogen (NO2, NO3, & NH3)"
+- "Inorganic nitrogen (NO2, NO3, & NH3) fix"
 - "Inorganic nitrogen (ammonia, nitrate and nitrite)"
 - "Kjeldahl nitrogen"
 - "Nitrogen"

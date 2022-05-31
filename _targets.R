@@ -19,7 +19,7 @@ param_groups_select <- c('temperature','conductivity')
 
 # Specify coordinates that define the spatial area of interest
 # lat/lon are referenced to WGS84
-coords_lon <- c(-77.063, -75.333, -75.437)
+coords_lon <- c(-77.063, -75.333, -75.4371)
 coords_lat <- c(40.547, 41.029, 39.880)
 
 # Specify arguments to WQP queries

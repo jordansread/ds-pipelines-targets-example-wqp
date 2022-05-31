@@ -8,6 +8,7 @@ source("1_fetch/src/summarize_wqp_records.R")
 p1_targets_list <- list(
   
   # Get common parameter groups and WQP CharacteristicNames
+  # can these next two targets be just one target?
   tar_target(
     p1_wqp_params_yml,
     '1_fetch/cfg/wqp_codes.yml',
@@ -27,6 +28,7 @@ p1_targets_list <- list(
   
   # Save log file containing WQP characteristic names that are similar to the
   # parameter groups of interest
+  # ***not sure I understand this one?
   tar_target(
     p1_similar_char_names_txt,
     find_similar_characteristics(p1_char_names, param_groups_select, "1_fetch/out"),
@@ -55,6 +57,7 @@ p1_targets_list <- list(
   # Create a big grid of boxes to set up chunked data queries
   # why does the grid need to be CONUS vs 180, 90 to all of globe? 
   # tigris package could be avoided
+  # ** could build this w/ the AOI but with `offset` arg to be in lower corner of 180 90
   tar_target(
     p1_conus_grid,
     create_conus_grid(cellsize = c(1,1))
@@ -82,6 +85,8 @@ p1_targets_list <- list(
     # also pass additional arguments to WQP, e.g. sampleMedia or siteType, using 
     # wqp_args. Below, wqp_args is defined in _targets.R. See documentation
     # in 1_fetch/src/get_wqp_inventory.R for further details.
+    # ** do you want to have all of the chars together for the pull? Or map on
+    # ** the main groups (e.g., `param_groups_select`)
     inventory_wqp(grid = p1_conus_grid_aoi,
                   char_names = p1_char_names,
                   wqp_args = wqp_args),
@@ -90,6 +95,7 @@ p1_targets_list <- list(
   
   # Subset the WQP inventory to only retain sites within the area of interest
   # clever, I like this, esp since buffer lets you specify stream segments
+  # ** issues if buffer_dist_m > dist_m in subset_grids_to_aoi()?
   tar_target(
     p1_wqp_inventory_aoi,
     subset_inventory(p1_wqp_inventory, p1_AOI_sf, buffer_dist_m = 100)
