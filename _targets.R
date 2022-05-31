@@ -6,10 +6,12 @@ tar_option_set(packages = c('tidyverse', 'lubridate', 'dataRetrieval',
 
 source("1_fetch.R")
 
+# how to manually trigger a re-inventory? a re-pull of WQ data?
+# changing these params will rebuild inventory and re-pull WQ:
 # Define the temporal extent of our data pull
 # set start_date or end_date to "" to query the earliest or latest available date
 start_date <- "2000-01-01"
-end_date <- "2020-12-31" 
+end_date <- "2021-01-03" 
 
 # Define which parameter groups (and CharacteristicNames) to return from WQP 
 # options for parameter groups are represented in first level of 1_fetch/cfg/wqp_codes.yml

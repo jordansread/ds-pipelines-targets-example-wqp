@@ -53,7 +53,7 @@ create_conus_grid <- function(cellsize, year = 2020, progress_bar = FALSE){
 #' @example subset_grids_to_aoi(grid = p1_conus_grid, dist_m = 5000)
 #' 
 
-subset_grids_to_aoi <- function(grid, aoi_poly, dist_m){
+subset_grids_to_aoi <- function(grid, aoi_poly, dist_m = 5000){
 
   
   # Filter the big grid of boxes to only include those that overlap/are within

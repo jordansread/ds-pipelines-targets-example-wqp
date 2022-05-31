@@ -53,17 +53,22 @@ p1_targets_list <- list(
   ),
   
   # Create a big grid of boxes to set up chunked data queries
+  # why does the grid need to be CONUS vs 180, 90 to all of globe? 
+  # tigris package could be avoided
   tar_target(
     p1_conus_grid,
     create_conus_grid(cellsize = c(1,1))
   ),
   
+  # Error in tar_throw_run(target$metrics$error) : 
+  #  could not load dependencies of target p1_wqp_inventory_c42d0a6e. Input must be a vector, not a <sfc_POLYGON/sfc> object.
+  # ^ due to mapping on the spatial objects?
   # Use spatial subsetting to find boxes that overlap the area of interest
   # (i.e., are within dist_m of p1_AOI_sf). These boxes will be used to
   # query the WQP.
   tar_target(
     p1_conus_grid_aoi,
-    subset_grids_to_aoi(p1_conus_grid, p1_AOI_sf, dist_m = 5000)
+    subset_grids_to_aoi(p1_conus_grid, p1_AOI_sf, dist_m = 0.2)
   ),
   
   # Inventory data available from the WQP within each of the boxes that overlap
@@ -84,12 +89,14 @@ p1_targets_list <- list(
   ),
   
   # Subset the WQP inventory to only retain sites within the area of interest
+  # clever, I like this, esp since buffer lets you specify stream segments
   tar_target(
     p1_wqp_inventory_aoi,
     subset_inventory(p1_wqp_inventory, p1_AOI_sf, buffer_dist_m = 100)
   ),
   
   # Summarize the data that would come back from the WQP
+  # used to check the file download result
   tar_target(
     p1_wqp_inventory_summary_csv,
     summarize_wqp_inventory(p1_wqp_inventory_aoi, "1_fetch/log/summary_wqp_inventory.csv"),
@@ -105,6 +112,8 @@ p1_targets_list <- list(
   ),
   
   # Group the sites into reasonably sized chunks for downloading data 
+  # no consideration for data volume? 
+  # group using tile, then resultCount, then max_sites_allowed?
   tar_target(
     p1_site_ids_grouped,
     add_download_groups(p1_site_ids, max_sites_allowed = 500) %>%
@@ -114,6 +123,7 @@ p1_targets_list <- list(
   ),
 
   # Map over groups of sites to download data   
+  # hmmm, what triggers a re-pull of this? Doesn't have resultCount info
   tar_target(
     p1_wqp_data_aoi,
     fetch_wqp_data(p1_site_ids_grouped, p1_char_names, wqp_args = wqp_args),
