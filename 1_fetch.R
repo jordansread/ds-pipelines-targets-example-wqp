@@ -8,7 +8,6 @@ source("1_fetch/src/summarize_wqp_records.R")
 p1_targets_list <- list(
   
   # Get common parameter groups and WQP CharacteristicNames
-  # can these next two targets be just one target?
   tar_target(
     p1_wqp_params_yml,
     '1_fetch/cfg/wqp_codes.yml',
@@ -28,7 +27,6 @@ p1_targets_list <- list(
   
   # Save log file containing WQP characteristic names that are similar to the
   # parameter groups of interest
-  # ***not sure I understand this one?
   tar_target(
     p1_similar_char_names_txt,
     find_similar_characteristics(p1_char_names, param_groups_select, "1_fetch/out"),
@@ -49,91 +47,95 @@ p1_targets_list <- list(
   # Create a spatial (sf) object representing the area of interest
   tar_target(
     p1_AOI_sf,
-    sf::st_as_sf(p1_AOI,coords=c("lon","lat"),crs=4326) %>%
+    sf::st_as_sf(p1_AOI, coords = c("lon","lat"), crs = 4326) %>%
       summarize(geometry = st_combine(geometry)) %>%
       sf::st_cast("POLYGON")
   ),
   
-  # Create a big grid of boxes to set up chunked data queries
-  # why does the grid need to be CONUS vs 180, 90 to all of globe? 
-  # tigris package could be avoided
-  # ** could build this w/ the AOI but with `offset` arg to be in lower corner of 180 90
+  # Create a big grid of boxes to set up chunked data queries.
+  # The resulting grid, which covers the globe, allows for queries
+  # outside of CONUS, including AK, HI, and US territories. 
   tar_target(
-    p1_conus_grid,
-    create_conus_grid(cellsize = c(1,1))
+    p1_global_grid,
+    create_global_grid()
   ),
   
-  # Error in tar_throw_run(target$metrics$error) : 
-  #  could not load dependencies of target p1_wqp_inventory_c42d0a6e. Input must be a vector, not a <sfc_POLYGON/sfc> object.
-  # ^ due to mapping on the spatial objects?
   # Use spatial subsetting to find boxes that overlap the area of interest
   # (i.e., are within dist_m of p1_AOI_sf). These boxes will be used to
   # query the WQP.
   tar_target(
-    p1_conus_grid_aoi,
-    subset_grids_to_aoi(p1_conus_grid, p1_AOI_sf, dist_m = 0.2)
+    p1_global_grid_aoi,
+    subset_grids_to_aoi(p1_global_grid, p1_AOI_sf)
   ),
   
   # Inventory data available from the WQP within each of the boxes that overlap
   # the area of interest. To prevent timeout issues that result from large data 
   # requests, use {targets} dynamic branching capabilities to map the function 
-  # inventory_wqp() over each grid within p1_conus_grid_aoi. {targets} will 
-  # then combine all of the grid-scale inventories into one table.
+  # inventory_wqp() over each grid within p1_global_grid_aoi. {targets} will then
+  # combine all of the grid-scale inventories into one table. See comments below
+  # associated with target p1_wqp_data_aoi regarding the use of error = 'continue'.
   tar_target(
     p1_wqp_inventory,
     # inventory_wqp() requires grid and char_names as inputs, but users can 
     # also pass additional arguments to WQP, e.g. sampleMedia or siteType, using 
     # wqp_args. Below, wqp_args is defined in _targets.R. See documentation
     # in 1_fetch/src/get_wqp_inventory.R for further details.
-    # ** do you want to have all of the chars together for the pull? Or map on
-    # ** the main groups (e.g., `param_groups_select`)
-    inventory_wqp(grid = p1_conus_grid_aoi,
+    inventory_wqp(grid = p1_global_grid_aoi,
                   char_names = p1_char_names,
                   wqp_args = wqp_args),
-    pattern = map(p1_conus_grid_aoi)
+    pattern = cross(p1_global_grid_aoi, p1_char_names),
+    error = "continue"
   ),
   
   # Subset the WQP inventory to only retain sites within the area of interest
-  # clever, I like this, esp since buffer lets you specify stream segments
-  # ** issues if buffer_dist_m > dist_m in subset_grids_to_aoi()?
   tar_target(
     p1_wqp_inventory_aoi,
-    subset_inventory(p1_wqp_inventory, p1_AOI_sf, buffer_dist_m = 100)
+    subset_inventory(p1_wqp_inventory, p1_AOI_sf)
   ),
   
   # Summarize the data that would come back from the WQP
-  # used to check the file download result
   tar_target(
     p1_wqp_inventory_summary_csv,
     summarize_wqp_inventory(p1_wqp_inventory_aoi, "1_fetch/log/summary_wqp_inventory.csv"),
     format = "file"
   ),
   
-  # Pull site id's from the WQP inventory
+  # Pull site id's and total number of records for each site from the WQP inventory
   tar_target(
-    p1_site_ids,
+    p1_site_counts,
     p1_wqp_inventory_aoi %>%
-      pull(MonitoringLocationIdentifier) %>%
-      unique()
+      group_by(MonitoringLocationIdentifier, lon, lat, datum, grid_id) %>%
+      summarize(results_count = sum(resultCount, na.rm = TRUE),
+                .groups = 'drop')
   ),
   
   # Group the sites into reasonably sized chunks for downloading data 
-  # no consideration for data volume? 
-  # group using tile, then resultCount, then max_sites_allowed?
   tar_target(
-    p1_site_ids_grouped,
-    add_download_groups(p1_site_ids, max_sites_allowed = 500) %>%
+    p1_site_counts_grouped,
+    add_download_groups(p1_site_counts, 
+                        max_sites = 500,
+                        max_results = 250000) %>%
       group_by(download_grp) %>%
       tar_group(),
     iteration = "group"
   ),
-
-  # Map over groups of sites to download data   
-  # hmmm, what triggers a re-pull of this? Doesn't have resultCount info
+  
+  # Map over groups of sites to download data.
+  # Note that because error = 'continue', {targets} will attempt to build all 
+  # of the "branches" represented in p1_site_counts_grouped, even if one branch 
+  # returns an error. This way, we will not need to re-build branches that have
+  # already run successfully. However, if a branch fails, {targets} will throw
+  # an error reading `could not load dependencies of [immediate downstream target]. invalid 
+  # 'description' argument` because it cannot merge the individual branches and so did not  
+  # complete the branching target. The error(s) associated with the failed branch will therefore 
+  # need to be resolved before the full target can be successfully built. A 
+  # common reason a branch may fail is due to WQP timeout errors. Timeout errors 
+  # can sometimes be resolved by waiting a few hours and retrying tar_make().
   tar_target(
     p1_wqp_data_aoi,
-    fetch_wqp_data(p1_site_ids_grouped, p1_char_names, wqp_args = wqp_args),
-    pattern = map(p1_site_ids_grouped)
+    fetch_wqp_data(p1_site_counts_grouped, p1_char_names, wqp_args = wqp_args),
+    pattern = map(p1_site_counts_grouped),
+    error = "continue"
   ),
   
   # Summarize the data downloaded from the WQP
@@ -143,5 +145,5 @@ p1_targets_list <- list(
                        "1_fetch/log/summary_wqp_data.csv"),
     format = "file"
   )
-
+  
 )

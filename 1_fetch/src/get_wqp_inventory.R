@@ -9,6 +9,8 @@
 #' @param wqp_args list containing additional arguments to pass to whatWQPdata(),
 #' defaults to NULL. See https://www.waterqualitydata.us/webservices_documentation 
 #' for more information.  
+#' @param max_tries integer, maximum number of attempts if the data download 
+#' step returns an error. Defaults to 3.
 #' 
 #' @value returns a data frame containing sites available from the Water Quality Portal
 #' 
@@ -18,7 +20,7 @@
 #' explicitly load and attach sf package to handle geometry data in `grid`
 library(sf)
 
-inventory_wqp <- function(grid, char_names, wqp_args = NULL){
+inventory_wqp <- function(grid, char_names, wqp_args = NULL, max_tries = 3){
   
   # Get bounding box for the grid polygon
   bbox <- sf::st_bbox(grid)
@@ -27,16 +29,18 @@ inventory_wqp <- function(grid, char_names, wqp_args = NULL){
   char_names <- as.character(unlist(char_names))
   
   # Print time-specific message so user can see progress
-  # perhaps change to 'Inventorying WQP data for grid %s'?
-  message(sprintf('Retrieving whatWQPdata for grid %s...', grid$id))
-
+  message(sprintf('Inventorying WQP data for grid %s, %s', 
+                  grid$id, char_names))
+  
   # Inventory available WQP data
   wqp_inventory <- lapply(char_names,function(x){
     # define arguments for whatWQPdata
     wqp_args_all <- c(wqp_args, list(bBox = c(bbox$xmin, bbox$ymin, bbox$xmax, bbox$ymax),
                                      characteristicName = x))
     # query WQP
-    dataRetrieval::whatWQPdata(wqp_args_all) %>%
+    retry::retry(dataRetrieval::whatWQPdata(wqp_args_all),
+                 when = "Error:", 
+                 max_tries = max_tries) %>%
       mutate(CharacteristicName = x, grid_id = grid$id)
   }) %>%
     bind_rows()
@@ -50,7 +54,7 @@ inventory_wqp <- function(grid, char_names, wqp_args = NULL){
   # Join WQP inventory with site metadata 
   wqp_inventory_out <- wqp_inventory %>%
     left_join(site_location_metadata, by = "MonitoringLocationIdentifier")
-
+  
   return(wqp_inventory_out)
   
 }
@@ -129,7 +133,7 @@ transform_site_locations <- function(sites, crs_out = "WGS84"){
 #' @param aoi_sf sf object representing the area of interest
 #' @param buffer_dist_m integer reflecting a desired buffer distance (in meters) around
 #' the area of interest; if a site is within buffer_dist_m of aoi_sf, retain that site.
-#' Defaults to zero.
+#' Defaults to 0 meters. 
 #' 
 #' @value returns a data frame containing sites from the Water Quality Portal that 
 #' are located within the area of interest.
@@ -137,8 +141,9 @@ transform_site_locations <- function(sites, crs_out = "WGS84"){
 subset_inventory <- function(wqp_inventory, aoi_sf, buffer_dist_m = 0){
   
   # Harmonize different coordinate reference systems used across sites
-  queried_sites_transformed <- transform_site_locations(wqp_inventory, crs_out= "WGS84") %>%
-    sf::st_as_sf(coords = c("lon","lat"), crs = 4326) 
+  queried_sites_transformed <- transform_site_locations(wqp_inventory, crs_out= "WGS84") 
+  queried_sites_transformed_sf <- sf::st_as_sf(queried_sites_transformed, 
+                                               coords = c("lon","lat"), crs = 4326) 
   
   # Filter wqp inventory to only include sites within area of interest + some user-specified 
   # distance to ensure we retain all sites within the AOI. 
@@ -147,20 +152,18 @@ subset_inventory <- function(wqp_inventory, aoi_sf, buffer_dist_m = 0){
   # st_is_within_distance is used here instead because buffers created using the s2 engine
   # are rough and can be glitchy when working with geographic coordinates. See this blog
   # post by the sf maintainers: https://r-spatial.github.io/sf/articles/sf7.html#buffers-1
-  queried_sites_aoi <- queried_sites_transformed %>%
-    sf::st_filter(y = sf::st_transform(aoi_sf,sf::st_crs(.)),
-                  .predicate = st_is_within_distance,dist=units::set_units(buffer_dist_m, m)) %>%
+  queried_sites_aoi <- queried_sites_transformed_sf %>%
+    sf::st_filter(y = sf::st_transform(aoi_sf, sf::st_crs(.)),
+                  .predicate = st_is_within_distance,
+                  dist = units::set_units(buffer_dist_m, m)) %>%
+    mutate(lon = sf::st_coordinates(.)[,1],
+           lat = sf::st_coordinates(.)[,2]) %>%
     sf::st_drop_geometry() %>%
-    pull(MonitoringLocationIdentifier) %>%
-    unique()
-  
-  wqp_inventory_aoi <- wqp_inventory %>%
-    filter(MonitoringLocationIdentifier %in% queried_sites_aoi)
+    select(c(any_of(names(wqp_inventory)), datum))
   
   message(sprintf("Returned %s sites within area of interest.",
-                  length(queried_sites_aoi)))
+                  length(queried_sites_aoi$MonitoringLocationIdentifier)))
   
-  return(wqp_inventory_aoi)
+  return(queried_sites_aoi)
   
 }
-
