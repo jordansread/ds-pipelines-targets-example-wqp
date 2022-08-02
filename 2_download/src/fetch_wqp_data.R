@@ -1,12 +1,24 @@
-#' Find sites with identifier names that are likely to cause problems
-#' when downloading data from WQP by siteid
+#' @title Find bad site identifiers
 #' 
-#' @details Some site identifiers contain characters that cannot be parsed 
-#' by WQP, including "/". Identify and subset sites with potentially
-#' problematic identifiers.
+#' @description
+#' Function to check sites for identifier names that are likely to cause 
+#' problems when downloading data from WQP by siteid. Some site identifiers
+#' contain characters that cannot be parsed by WQP, including "/". This function
+#' identifies and subsets sites with potentially problematic identifiers.
 #' 
-#' @param sitecounts_df data frame containing the site identifiers. Data frame must
-#' at minimum contain column `MonitoringLocationIdentifier`.
+#' @param sitecounts_df data frame containing the site identifiers. Must contain
+#' column `MonitoringLocationIdentifier`.
+#' 
+#' @returns 
+#' Returns a data frame where each row represents a site with a problematic
+#' identifier, indicated by the new column `site_id`. All other columns within
+#' `sitecounts_df` are retained. Returns an empty data frame if no problematic
+#' site identifiers are found.
+#' 
+#' @examples 
+#' siteids <- data.frame(MonitoringLocationIdentifier = 
+#'                         c("USGS-01573482","COE/ISU-27630001"))
+#' identify_bad_ids(siteids)
 #' 
 identify_bad_ids <- function(sitecounts_df){
   
@@ -21,20 +33,22 @@ identify_bad_ids <- function(sitecounts_df){
 }
 
 
-#' Group sites for downloading data without hitting the WQP cap
+#' @title Group sites for downloading data without hitting the WQP cap
 #' 
-#' @description This function returns a data frame with a single column used
-#' to group the sites into reasonably sized chunks for downloading data.
+#' @description 
+#' Function to group inventoried sites into reasonably sized chunks for
+#' downloading data.
 #' 
-#' @param sitecounts_df data frame containing the site identifiers and total number of
-#' records available for each site. Must contain columns `MonitoringLocationIdentifier`
-#' and `results_count`.
-#' @param max_sites integer indicating the maximum number of sites allowed in each
-#' download group. Defaults to 500.
-#' @param max_results integer indicating the maximum number of records allowed in
-#' each download group. Defaults to 250,000.
+#' @param sitecounts_df data frame containing the site identifiers and total 
+#' number of records available for each site. Must contain columns 
+#' `MonitoringLocationIdentifier` and `results_count`.
+#' @param max_sites integer indicating the maximum number of sites allowed in
+#' each download group. Defaults to 500.
+#' @param max_results integer indicating the maximum number of records allowed
+#' in each download group. Defaults to 250,000.
 #' 
-#' @return returns a data frame with columns site id, the total number of records,
+#' @returns 
+#' Returns a data frame with columns site id, the total number of records,
 #' (retains the column from `sitecounts_df`), site number, and an additional column 
 #' called `download_grp` which is made up of unique groups that enable use of 
 #' `group_by()` and then `tar_group()` for downloading.
@@ -85,8 +99,7 @@ add_download_groups <- function(sitecounts_df, max_sites = 500, max_results = 25
         arrange(desc(results_count)) %>%
         mutate(task_num = MESS::cumsumbinning(x = results_count, 
                                               threshold = max_results, 
-                                              maxgroupsize = max_sites),
-               download_grp = paste0(grid_id,"_",task_num))
+                                              maxgroupsize = max_sites))
     }) %>%
     mutate(pull_by_id = TRUE)
   
@@ -94,7 +107,6 @@ add_download_groups <- function(sitecounts_df, max_sites = 500, max_results = 25
   sitecounts_grouped_bad_ids <- sitecounts_bad_ids %>%
     group_by(site_id) %>%
     mutate(task_num = max(sitecounts_grouped_good_ids$task_num) + cur_group_id(),
-           download_grp = paste0(grid_id,"_",task_num),
            pull_by_id = FALSE) %>%
     ungroup()
   
@@ -102,9 +114,12 @@ add_download_groups <- function(sitecounts_df, max_sites = 500, max_results = 25
   # format columns
   sitecounts_grouped_out <- sitecounts_grouped_good_ids %>%
     bind_rows(sitecounts_grouped_bad_ids) %>%
+    # Ensure the groups are ordered correctly by prepending a dynamic number of 0s
+    # before the task number based on the maximum number of tasks.
+    mutate(download_grp = sprintf(paste0("%s_%0", nchar(max(task_num)), "d"), 
+                                  grid_id, task_num)) %>% 
     arrange(download_grp) %>%
-    mutate(site_n = row_number()) %>% 
-    select(site_id, lat, lon, datum, results_count, site_n, download_grp, pull_by_id)
+    select(site_id, lat, lon, datum, results_count, download_grp, pull_by_id) 
   
   return(sitecounts_grouped_out)
 
@@ -112,16 +127,28 @@ add_download_groups <- function(sitecounts_df, max_sites = 500, max_results = 25
 
 
 
-#' Function to return a small bounding box around site(s)
+#' @title Return a small bounding box around site(s)
 #' 
-#' @details Some site identifiers contain undesired characters and cannot be
+#' @description 
+#' Some site identifiers contain undesired characters and cannot be
 #' parsed by WQP. This function creates a small bounding box around the 
 #' site(s) for the purposes of querying WQP by bBox rather than site id. 
 #' 
-#' @param sites data frame containing at minimum columns lat, lon, and datum
+#' @param sites data frame containing at minimum columns lat, lon, and datum.
 #' @param buffer_dist_degrees double; value indicating how large of a buffer
 #' should be added to the site(s). Bounding box will be computed in WGS84 and
 #' units are in degrees. Defaults to 0.005 degrees (~500 m).
+#' 
+#' @returns
+#' Returns an object of class "bbox" that represents the bounding box around
+#' the point locations included in `sites`. Contains vectors "xmin", "ymin",
+#' "xmax", and "ymax". 
+#' 
+#' @examples 
+#' sites <- data.frame(lon = c(-74.62238, -74.94351, -75.25741), 
+#'                     lat = c(39.79456, 39.31011, 39.52289),
+#'                     datum = rep('NAD83', 3))
+#' create_site_bbox(sites)
 #' 
 create_site_bbox <- function(sites, buffer_dist_degrees = 0.005){
   
@@ -145,31 +172,44 @@ create_site_bbox <- function(sites, buffer_dist_degrees = 0.005){
   
 
 
-#' Download data from the Water Quality Portal
+#' @title Download data from the Water Quality Portal
 #' 
-#' @description Function to pull WQP data given a dataset of site ids
+#' @description 
+#' Function to pull WQP data given a dataset of site ids and/or site coordinates.
 #'  
-#' @param site_counts_grouped data frame containing site identifiers, the 
-#' total number of records, site numbers, and a download group assigned
-#' for each site. Must contain columns `site_id`, `site_n`, and `pull_by_id`.
+#' @param site_counts_grouped data frame containing a row for each site. Columns 
+#' contain the site identifiers, the total number of records, and an assigned
+#' download group. Must contain columns `site_id` and `pull_by_id`, where
 #' `pull_by_id` is logical and indicates whether data should be downloaded
-#' using site identifiers or by querying a small bounding box around the site.
+#' using the site identifier or by querying a small bounding box around the site.
 #' @param characteristics vector of character strings indicating which WQP
-#' CharacteristicName to query
+#' characteristic names to query.
 #' @param wqp_args list containing additional arguments to pass to whatWQPdata(),
 #' defaults to NULL. See https://www.waterqualitydata.us/webservices_documentation 
 #' for more information.  
 #' @param max_tries integer, maximum number of attempts if the data download 
 #' step returns an error. Defaults to 3.
+#' @param verbose logical, indicates whether messages from {dataRetrieval} should 
+#' be printed to the console in the event that a query returns no data. Defaults 
+#' to FALSE. Note that `verbose` only handles messages, and {dataRetrieval} errors 
+#' or warnings will still get passed up to `fetch_wqp_data`. 
 #' 
-#' @return returns a data frame containing data downloaded from the Water Quality Portal, 
-#' where each row represents a unique data record. 
+#' @returns
+#' Returns a data frame containing data downloaded from the Water Quality Portal, 
+#' where each row represents a unique data record.
 #' 
-fetch_wqp_data <- function(site_counts_grouped, characteristics, wqp_args = NULL, max_tries = 3){
+#' @examples
+#' site_counts <- data.frame(site_id = c("USGS-01475850"), pull_by_id = c(TRUE))
+#' fetch_wqp_data(site_counts, 
+#'               "Temperature, water", 
+#'               wqp_args = list(siteType = "Stream"))
+#' 
+fetch_wqp_data <- function(site_counts_grouped, characteristics, wqp_args = NULL, 
+                           max_tries = 3, verbose = FALSE){
   
-  message(sprintf("Retrieving WQP data for sites %s:%s",
-                  min(site_counts_grouped$site_n), 
-                  max(site_counts_grouped$site_n)))
+  message(sprintf("Retrieving WQP data for %s sites in group %s, %s",
+                  nrow(site_counts_grouped), unique(site_counts_grouped$download_grp), 
+                  characteristics))
   
   # Define arguments for readWQPdata
   # sites with pull_by_id = FALSE cannot be queried by their site
@@ -186,11 +226,22 @@ fetch_wqp_data <- function(site_counts_grouped, characteristics, wqp_args = NULL
                            characteristicName = c(characteristics)))
   }
   
-  # Pull data, retrying up to the number of times indicated by `max_tries`
-  wqp_data <- retry::retry(dataRetrieval::readWQPdata(wqp_args_all),
-                           when = "Error:", 
-                           max_tries = max_tries)
+  # Define function to pull data, retrying up to the number of times
+  # indicated by `max_tries`
+  pull_data <- function(x){
+    retry::retry(dataRetrieval::readWQPdata(x),
+                 when = "Error:", 
+                 max_tries = max_tries)
+  }
   
+  # Now pull the data. If verbose == TRUE, print all messages from dataRetrieval,
+  # otherwise, suppress messages.
+  if(verbose) {
+    wqp_data <- pull_data(wqp_args_all)
+  } else {
+    wqp_data <- suppressMessages(pull_data(wqp_args_all))
+  }
+
   # We applied special handling for sites with pull_by_id = FALSE (see comments
   # above). Filter wqp_data to only include sites requested in site_counts_grouped
   # in case our bounding box approach picked up any additional, undesired sites. 
