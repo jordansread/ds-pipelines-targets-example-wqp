@@ -19,13 +19,13 @@ param_groups_select <- c('temperature','conductivity')
 
 # Specify coordinates that define the spatial area of interest
 # lat/lon are referenced to WGS84
-coords_lon <- c(-77.063, -75.333, -75.4371)
-coords_lat <- c(40.547, 41.029, 39.880)
+coords_lon <- c(-90.333, -87.8, -89)
+coords_lat <- c(42.547, 45.029, 35)
 
 # Specify arguments to WQP queries
 # see https://www.waterqualitydata.us/webservices_documentation for more information 
 wqp_args <- list(sampleMedia = c("Water","water"),
-                 siteType = "Stream",
+                 siteType = "Lake, Reservoir, Impoundment",
                  # return sites with at least one data record
                  minresults = 1, 
                  startDateLo = start_date,
